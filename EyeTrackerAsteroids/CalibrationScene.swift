@@ -146,7 +146,6 @@ class CalibrationScene: SKScene {
     // MARK: - Calibration Flow
 
     private func beginNextTarget() {
-        print("[Calibration] beginNextTarget: index=\(currentTargetIndex), total=\(targetPoints.count)")
         guard currentTargetIndex < targetPoints.count else {
             finishCalibration()
             return
@@ -233,7 +232,6 @@ class CalibrationScene: SKScene {
         if collectTimer >= collectDuration {
             isCollecting = false
             collectedSamples.append(currentSamples)
-            print("[Calibration] Finished collecting target \(currentTargetIndex), samples=\(currentSamples.count), total collected=\(collectedSamples.count)")
 
             // Flash dot green to confirm
             let flash = SKAction.sequence([
@@ -247,7 +245,6 @@ class CalibrationScene: SKScene {
                 }
             ])
             dotNode.run(flash) { [weak self] in
-                print("[Calibration] Flash completion, self is \(self == nil ? "nil" : "alive")")
                 self?.currentTargetIndex += 1
                 self?.beginNextTarget()
             }
@@ -257,27 +254,19 @@ class CalibrationScene: SKScene {
     // MARK: - Compute Calibration
 
     private func finishCalibration() {
-        print("[Calibration] finishCalibration called")
-        print("[Calibration] collectedSamples.count=\(collectedSamples.count), targetPoints.count=\(targetPoints.count)")
         dotNode.isHidden = true
         ringNode.isHidden = true
         countdownLabel.isHidden = true
 
         let data = computeCalibration()
-        print("[Calibration] computeCalibration done: scaleX=\(data.scaleX), scaleY=\(data.scaleY), offsetX=\(data.offsetX), offsetY=\(data.offsetY)")
 
         // Show completion message briefly
         instructionLabel.text = "Calibration Complete!"
         instructionLabel.isHidden = false
 
-        print("[Calibration] calibrationDelegate is \(calibrationDelegate == nil ? "nil" : "set")")
         let delegate = calibrationDelegate
-        print("[Calibration] captured delegate is \(delegate == nil ? "nil" : "set"), scheduling 1s wait...")
-
         run(SKAction.wait(forDuration: 1.0)) {
-            print("[Calibration] SKAction.wait completed, calling delegate...")
             delegate?.calibrationDidComplete(with: data)
-            print("[Calibration] delegate call finished")
         }
     }
 

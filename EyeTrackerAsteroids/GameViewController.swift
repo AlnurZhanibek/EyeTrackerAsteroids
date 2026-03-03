@@ -60,18 +60,14 @@ class GameViewController: UIViewController, ARSessionDelegate, CalibrationSceneD
     }
 
     func calibrationDidComplete(with data: CalibrationData) {
-        print("[GameVC] calibrationDidComplete called on thread: \(Thread.isMainThread ? "main" : "background")")
         calibrationData = data
         isCalibrating = false
         calibrationScene = nil
-
+        
         // Transition to the game scene
-        print("[GameVC] Creating GameScene and presenting...")
         gameScene = GameScene(size: view.bounds.size)
         gameScene.scaleMode = .resizeFill
-        let transition = SKTransition.fade(withDuration: 0.5)
-        skView.presentScene(gameScene, transition: transition)
-        print("[GameVC] Game scene presented")
+        skView.presentScene(gameScene)
     }
 
     // MARK: - Face Tracking
