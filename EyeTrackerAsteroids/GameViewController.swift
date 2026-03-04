@@ -10,14 +10,11 @@ import SpriteKit
 import ARKit
 import SceneKit
 
-class GameViewController: UIViewController, ARSessionDelegate, CalibrationSceneDelegate {
+class GameViewController: UIViewController, ARSessionDelegate {
 
     private var sceneView: ARSCNView!
     private var skView: SKView!
     private var gameScene: GameScene!
-    private var calibrationScene: CalibrationScene?
-    private var calibrationData: CalibrationData?
-    private var isCalibrating = true
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -35,8 +32,10 @@ class GameViewController: UIViewController, ARSessionDelegate, CalibrationSceneD
 
         skView.ignoresSiblingOrder = true
 
-        // Start with calibration
-        showCalibration()
+        // Go straight to the game
+        gameScene = GameScene(size: view.bounds.size)
+        gameScene.scaleMode = .resizeFill
+        skView.presentScene(gameScene)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -49,35 +48,10 @@ class GameViewController: UIViewController, ARSessionDelegate, CalibrationSceneD
         sceneView.session.pause()
     }
 
-    // MARK: - Calibration
-
-    private func showCalibration() {
-        isCalibrating = true
-        calibrationScene = CalibrationScene(size: view.bounds.size)
-        calibrationScene!.scaleMode = .resizeFill
-        calibrationScene!.calibrationDelegate = self
-        skView.presentScene(calibrationScene!)
-    }
-
-    func calibrationDidComplete(with data: CalibrationData) {
-        calibrationData = data
-        isCalibrating = false
-        calibrationScene = nil
-        
-        // Transition to the game scene
-        gameScene = GameScene(size: view.bounds.size)
-        gameScene.scaleMode = .resizeFill
-        skView.presentScene(gameScene)
-    }
-
     // MARK: - Face Tracking
 
     private func startFaceTracking() {
         guard ARFaceTrackingConfiguration.isSupported else {
-            if isCalibrating {
-                // Skip calibration if face tracking isn't available
-                calibrationDidComplete(with: CalibrationData())
-            }
             gameScene?.showUnsupportedMessage()
             return
         }
@@ -93,67 +67,45 @@ class GameViewController: UIViewController, ARSessionDelegate, CalibrationSceneD
             return
         }
 
-        let rawPoint = rawGazeScreenPoint(from: faceAnchor)
+        let gazePoint = rawGazeScreenPoint(from: faceAnchor)
 
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if self.isCalibrating {
-                // Feed raw gaze to calibration scene
-                self.calibrationScene?.updateRawGazePoint(rawPoint)
-            } else {
-                // Apply calibration and feed to game scene
-                let calibrated = self.applyCalibration(to: rawPoint)
-                self.gameScene?.updateGazePoint(calibrated)
-            }
+            self?.gameScene?.updateGazePoint(gazePoint)
         }
     }
 
-    /// Projects the eye gaze direction onto screen coordinates (raw, uncalibrated).
     private func rawGazeScreenPoint(from faceAnchor: ARFaceAnchor) -> CGPoint {
-        let lookAt = faceAnchor.lookAtPoint
+        let lookAtPoint = faceAnchor.lookAtPoint
+
+        guard let cameraTransform = sceneView.session.currentFrame?.camera.transform else {
+            return CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        }
+
+        // Transform lookAtPoint into world space, then into camera space
+        let lookAtInWorld = faceAnchor.transform * simd_float4(lookAtPoint, 1)
+        let lookAtInCamera = simd_mul(simd_inverse(cameraTransform), lookAtInWorld)
 
         let screenWidth = view.bounds.width
         let screenHeight = view.bounds.height
 
-        let distance = sqrt(lookAt.x * lookAt.x + lookAt.y * lookAt.y + lookAt.z * lookAt.z)
-        guard distance > 0 else { return CGPoint(x: screenWidth / 2, y: screenHeight / 2) }
+        // Approximate physical screen size in meters
+        let ppi: CGFloat = 460
+        let scale = UIScreen.main.scale
+        let physicalWidth = screenWidth * scale / ppi * 0.0254
+        let physicalHeight = screenHeight * scale / ppi * 0.0254
 
-        let horizontalAngle = atan2(lookAt.x, lookAt.z)
-        let verticalAngle = atan2(lookAt.y, lookAt.z)
+        // In camera space for portrait: Y maps to screen X, X maps to screen Y.
+        // Normalize to [-0.5, 0.5] range, then shift to [0, 1] for screen mapping.
+        let normalizedX = 0.5 + CGFloat(lookAtInCamera.y) / physicalWidth
+        let normalizedY = 0.5 + CGFloat(lookAtInCamera.x) / physicalHeight
 
-        let sensitivity: CGFloat = 3.5
+        let screenX = normalizedX * screenWidth
+        let screenY = normalizedY * screenHeight
 
-        let normalizedX = 0.5 - CGFloat(horizontalAngle) * sensitivity
-        let normalizedY = 0.5 - CGFloat(verticalAngle) * sensitivity
-
-        let clampedX = max(0, min(screenWidth, normalizedX * screenWidth))
-        let clampedY = max(0, min(screenHeight, normalizedY * screenHeight))
-
-        return CGPoint(x: clampedX, y: clampedY)
-    }
-
-    /// Applies calibration correction to raw gaze point.
-    /// The calibration data maps raw coordinates to corrected screen coordinates
-    /// using a linear model: corrected = scale * raw + offset.
-    /// Input and output are in UIKit coordinates (origin top-left).
-    private func applyCalibration(to rawPoint: CGPoint) -> CGPoint {
-        guard let cal = calibrationData else { return rawPoint }
-
-        let screenWidth = view.bounds.width
-        let screenHeight = view.bounds.height
-
-        // Calibration was computed in SpriteKit coords (bottom-left origin).
-        // Convert raw point to SK coords, apply calibration, convert back.
-        let rawSK = CGPoint(x: rawPoint.x, y: screenHeight - rawPoint.y)
-
-        let correctedX = cal.scaleX * rawSK.x + cal.offsetX
-        let correctedY = cal.scaleY * rawSK.y + cal.offsetY
-
-        // Convert back to UIKit coords and clamp
-        let uiX = max(0, min(screenWidth, correctedX))
-        let uiY = max(0, min(screenHeight, screenHeight - correctedY))
-
-        return CGPoint(x: uiX, y: uiY)
+        return CGPoint(
+            x: max(0, min(screenWidth, screenX)),
+            y: max(0, min(screenHeight, screenY))
+        )
     }
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
